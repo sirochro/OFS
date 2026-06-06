@@ -85,6 +85,7 @@ private:
     void ScriptTimelineActionClicked(const FunscriptActionClickedEvent* ev) noexcept;
     void ScriptTimelineDoubleClick(const ShouldSetTimeEvent* ev) noexcept;
     void ScriptTimelineSelectTime(const FunscriptShouldSelectTimeEvent* ev) noexcept;
+    void ScriptTimelineSelectRect(const FunscriptShouldSelectRectEvent* ev) noexcept;
     void ScriptTimelineActiveScriptChanged(const ShouldChangeActiveScriptEvent* ev) noexcept;
 
     void selectTopPoints() noexcept;

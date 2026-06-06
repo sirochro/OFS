@@ -253,6 +253,8 @@ bool OpenFunscripter::Init(int argc, char* argv[])
         ShouldSetTimeEvent::HandleEvent(EVENT_SYSTEM_BIND(this, &OpenFunscripter::ScriptTimelineDoubleClick)));
     EV::Queue().appendListener(FunscriptShouldSelectTimeEvent::EventType,
         FunscriptShouldSelectTimeEvent::HandleEvent(EVENT_SYSTEM_BIND(this, &OpenFunscripter::ScriptTimelineSelectTime)));
+    EV::Queue().appendListener(FunscriptShouldSelectRectEvent::EventType,
+        FunscriptShouldSelectRectEvent::HandleEvent(EVENT_SYSTEM_BIND(this, &OpenFunscripter::ScriptTimelineSelectRect)));
     EV::Queue().appendListener(ShouldChangeActiveScriptEvent::EventType,
         ShouldChangeActiveScriptEvent::HandleEvent(EVENT_SYSTEM_BIND(this, &OpenFunscripter::ScriptTimelineActiveScriptChanged)));
     EV::Queue().appendListener(ExportClipForChapter::EventType,
@@ -2812,6 +2814,14 @@ void OpenFunscripter::ScriptTimelineSelectTime(const FunscriptShouldSelectTimeEv
     OFS_PROFILE(__FUNCTION__);
     if (auto script = ev->script.lock()) {
         script->SelectTime(ev->startTime, ev->endTime, ev->clearSelection);
+    }
+}
+
+void OpenFunscripter::ScriptTimelineSelectRect(const FunscriptShouldSelectRectEvent* ev) noexcept
+{
+    OFS_PROFILE(__FUNCTION__);
+    if (auto script = ev->script.lock()) {
+        script->SelectRect(ev->startTime, ev->endTime, ev->minPos, ev->maxPos, ev->clearSelection);
     }
 }
 

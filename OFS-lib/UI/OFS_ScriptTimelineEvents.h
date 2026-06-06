@@ -64,3 +64,16 @@ class FunscriptShouldSelectTimeEvent : public OFS_Event<FunscriptShouldSelectTim
     FunscriptShouldSelectTimeEvent(float startTime, float endTime, bool clear, std::weak_ptr<Funscript> script) noexcept
         : startTime(startTime), endTime(endTime), clearSelection(clear), script(script) {}
 };
+
+class FunscriptShouldSelectRectEvent : public OFS_Event<FunscriptShouldSelectRectEvent>
+{
+    public:
+    float startTime;
+    float endTime;
+    int32_t minPos;
+    int32_t maxPos;
+    bool clearSelection;
+    std::weak_ptr<Funscript> script;
+    FunscriptShouldSelectRectEvent(float startTime, float endTime, int32_t minPos, int32_t maxPos, bool clear, std::weak_ptr<Funscript> script) noexcept
+        : startTime(startTime), endTime(endTime), minPos(minPos), maxPos(maxPos), clearSelection(clear), script(script) {}
+};

@@ -43,7 +43,19 @@ void ScriptTimeline::updateSelection(const OverlayDrawingCtx& ctx, bool clear) n
 	// It's supposed to prevent accidentally clearing the selection.
 	if(selectionInterval <= 0.008f) // 8ms
 		return;
-	
+
+	if (IsRectSelecting) {
+		// Convert relative Y (0=top, 1=bottom) to pos (0=bottom, 100=top).
+		float yMinRel = std::min(relSel1Y, relSel2Y);
+		float yMaxRel = std::max(relSel1Y, relSel2Y);
+		int32_t maxPos = (int32_t)std::round((1.f - yMinRel) * 100.f);
+		int32_t minPos = (int32_t)std::round((1.f - yMaxRel) * 100.f);
+		if (minPos < 0) minPos = 0;
+		if (maxPos > 100) maxPos = 100;
+		EV::Enqueue<FunscriptShouldSelectRectEvent>(startTime, endTime, minPos, maxPos, clear, ctx.ActiveScript());
+		return;
+	}
+
 	EV::Enqueue<FunscriptShouldSelectTimeEvent>(startTime, endTime, clear, ctx.ActiveScript());
 }
 
@@ -136,8 +148,13 @@ void ScriptTimeline::handleTimelineHover(const OverlayDrawingCtx& ctx) noexcept
 	if(IsSelecting)
 	{
 		// Update selection
-		relSel2 = (ImGui::GetMousePos().x - ctx.canvasPos.x) / ctx.canvasSize.x;
+		auto mp = ImGui::GetMousePos();
+		relSel2 = (mp.x - ctx.canvasPos.x) / ctx.canvasSize.x;
 		relSel2 = Util::Clamp(relSel2, 0.f, 1.f);
+		if (IsRectSelecting) {
+			relSel2Y = (mp.y - ctx.canvasPos.y) / ctx.canvasSize.y;
+			relSel2Y = Util::Clamp(relSel2Y, 0.f, 1.f);
+		}
 	}
 	else if(ImGui::IsMouseDragging(ImGuiMouseButton_Middle))
 	{
@@ -213,11 +230,19 @@ bool ScriptTimeline::handleTimelineClicks(const OverlayDrawingCtx& ctx) noexcept
 	}
 	else if(leftMouseClicked)
 	{
-		// Begin selection
+		// Begin selection. Mode is locked at drag start:
+		//   default        -> 2D rectangle (rect-select)
+		//   Alt + drag     -> legacy time-band selection
+		// Releasing/re-pressing Alt mid-drag does not switch modes.
 		IsSelecting = true;
+		IsRectSelecting = !ImGui::IsKeyDown(ImGuiMod_Alt);
 		float relSel1 = (mousePos.x - ctx.canvasPos.x) / ctx.canvasSize.x;
 		relSel2 = relSel1;
 		absSel1 = ctx.offsetTime + (visibleTime * relSel1);
+		float startY = (mousePos.y - ctx.canvasPos.y) / ctx.canvasSize.y;
+		startY = Util::Clamp(startY, 0.f, 1.f);
+		relSel1Y = startY;
+		relSel2Y = startY;
 		return true;
 	}
 	return false;
@@ -380,9 +405,30 @@ void ScriptTimeline::ShowScriptPositions(
 		constexpr auto selectColorBackground = IM_COL32(3, 252, 207, 100);
 		if (IsSelecting && (i == activeScriptIdx)) {
 			float relSel1 = (absSel1 - drawingCtx.offsetTime) / visibleTime;
-			drawingCtx.drawList->AddRectFilled(drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel1, 0), drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel2, drawingCtx.canvasSize.y), selectColorBackground);
-			drawingCtx.drawList->AddLine(drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel1, 0), drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel1, drawingCtx.canvasSize.y), selectColor, 3.0f);
-			drawingCtx.drawList->AddLine(drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel2, 0), drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel2, drawingCtx.canvasSize.y), selectColor, 3.0f);
+			float yTop = IsRectSelecting ? (drawingCtx.canvasSize.y * std::min(relSel1Y, relSel2Y)) : 0.f;
+			float yBot = IsRectSelecting ? (drawingCtx.canvasSize.y * std::max(relSel1Y, relSel2Y)) : drawingCtx.canvasSize.y;
+			drawingCtx.drawList->AddRectFilled(
+				drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel1, yTop),
+				drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel2, yBot),
+				selectColorBackground);
+			drawingCtx.drawList->AddLine(
+				drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel1, yTop),
+				drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel1, yBot),
+				selectColor, 3.0f);
+			drawingCtx.drawList->AddLine(
+				drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel2, yTop),
+				drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel2, yBot),
+				selectColor, 3.0f);
+			if (IsRectSelecting) {
+				drawingCtx.drawList->AddLine(
+					drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel1, yTop),
+					drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel2, yTop),
+					selectColor, 3.0f);
+				drawingCtx.drawList->AddLine(
+					drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel1, yBot),
+					drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel2, yBot),
+					selectColor, 3.0f);
+			}
 		}
 
 		// selectionStart currently used for controller select
@@ -417,6 +463,7 @@ void ScriptTimeline::ShowScriptPositions(
 			IsSelecting = false;
 			bool clearSelection = !(SDL_GetModState() & KMOD_CTRL);
 			updateSelection(drawingCtx, clearSelection);
+			IsRectSelecting = false;
 		}
 		else if(IsMovingIdx < 0 && ItemIsHovered)
 		{

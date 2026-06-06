@@ -500,6 +500,27 @@ void Funscript::SelectTime(float fromTime, float toTime, bool clear) noexcept
 	notifySelectionChanged();
 }
 
+void Funscript::SelectRect(float fromTime, float toTime, int32_t minPos, int32_t maxPos, bool clear) noexcept
+{
+	OFS_PROFILE(__FUNCTION__);
+	if(clear)
+		ClearSelection();
+
+	for (auto& action : data.Actions) {
+		if (action.atS >= fromTime && action.atS <= toTime) {
+			if (action.pos >= minPos && action.pos <= maxPos) {
+				ToggleSelection(action);
+			}
+		}
+		else if (action.atS > toTime)
+			break;
+	}
+
+	if (!clear)
+		sortSelection();
+	notifySelectionChanged();
+}
+
 FunscriptArray Funscript::GetSelection(float fromTime, float toTime) noexcept
 {
 	FunscriptArray selection;
