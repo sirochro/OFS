@@ -1613,6 +1613,7 @@ void OpenFunscripter::Step() noexcept
             }
 
             renderBulkSetPositionDialog();
+            renderOptimizeWavesDialog();
 
             webApi->ShowWindow(&ofsState.showWsApi);
             scripting->DrawScriptingMode(NULL);
@@ -2064,9 +2065,42 @@ void OpenFunscripter::renderBulkSetPositionDialog() noexcept
         if (ImGui::InputInt("##bulkSetPosInput", &BulkSetPositionValue)) {}
         BulkSetPositionValue = Util::Clamp<int32_t>(BulkSetPositionValue, 0, 100);
 
-        ImGui::Separator();
-        const float btnW = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
         const bool canApply = hasSel && selCount > 0;
+
+        // Nudge buttons: adjust the input value only; OK still applies.
+        const float nudgeW = (ImGui::GetContentRegionAvail().x - spacing) * 0.5f;
+        if (ImGui::Button("-10", ImVec2(nudgeW, 0.f))) {
+            BulkSetPositionValue = Util::Clamp<int32_t>(BulkSetPositionValue - 10, 0, 100);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("+10", ImVec2(nudgeW, 0.f))) {
+            BulkSetPositionValue = Util::Clamp<int32_t>(BulkSetPositionValue + 10, 0, 100);
+        }
+
+        ImGui::Separator();
+
+        // Quick-set buttons: immediate apply + close (undo captured).
+        auto applyAndClose = [&](int32_t v) {
+            undoSystem->Snapshot(StateType::ACTIONS_MOVED, ActiveFunscript());
+            ActiveFunscript()->SetSelectionPosition(v);
+            BulkSetPositionValue = v;
+            ShowBulkSetPositionDialog = false;
+            ImGui::CloseCurrentPopup();
+        };
+
+        if (!canApply) ImGui::BeginDisabled();
+        const float quickW = (ImGui::GetContentRegionAvail().x - spacing * 2.f) / 3.f;
+        if (ImGui::Button("All Btm", ImVec2(quickW, 0.f))) applyAndClose(0);
+        ImGui::SameLine();
+        if (ImGui::Button("All Mid", ImVec2(quickW, 0.f))) applyAndClose(50);
+        ImGui::SameLine();
+        if (ImGui::Button("All Top", ImVec2(quickW, 0.f))) applyAndClose(100);
+        if (!canApply) ImGui::EndDisabled();
+
+        ImGui::Separator();
+
+        const float btnW = (ImGui::GetContentRegionAvail().x - spacing) * 0.5f;
         if (!canApply) ImGui::BeginDisabled();
         if (ImGui::Button("OK", ImVec2(btnW, 0.f)))
         {
@@ -2080,6 +2114,59 @@ void OpenFunscripter::renderBulkSetPositionDialog() noexcept
         if (ImGui::Button("Cancel", ImVec2(btnW, 0.f)))
         {
             ShowBulkSetPositionDialog = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+void OpenFunscripter::openOptimizeWavesDialog() noexcept
+{
+    if (!ActiveFunscript() || !ActiveFunscript()->HasSelection()) return;
+    ShowOptimizeWavesDialog = true;
+}
+
+void OpenFunscripter::renderOptimizeWavesDialog() noexcept
+{
+    constexpr const char* kPopupId = "Optimize waves";
+    if (ShowOptimizeWavesDialog) ImGui::OpenPopup(kPopupId);
+
+    ImGui::SetNextWindowSize(ImVec2(360.f, 0.f), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal(kPopupId, &ShowOptimizeWavesDialog, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking))
+    {
+        const bool hasSel = ActiveFunscript() && ActiveFunscript()->HasSelection();
+        const size_t selCount = hasSel ? ActiveFunscript()->Selection().size() : 0;
+        ImGui::Text("Selected actions: %zu", selCount);
+        ImGui::Separator();
+
+        ImGui::SetNextItemWidth(-1.f);
+        ImGui::SliderInt("##optWaveTol", &OptimizeWavesTolerance, 0, 100, "Tolerance: %d");
+        OptimizeWavesTolerance = Util::Clamp<int32_t>(OptimizeWavesTolerance, 0, 100);
+
+        ImGui::Separator();
+        ImGui::Text("Preset:");
+        ImGui::RadioButton("None (wobble removal only)", &OptimizeWavesPresetIdx, 0);
+        ImGui::RadioButton("0-100 (force endpoints)",    &OptimizeWavesPresetIdx, 1);
+        ImGui::RadioButton("QUATRO (4-point quartile)",  &OptimizeWavesPresetIdx, 2);
+
+        ImGui::Separator();
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const float btnW = (ImGui::GetContentRegionAvail().x - spacing) * 0.5f;
+        const bool canApply = hasSel && selCount >= 2;
+        if (!canApply) ImGui::BeginDisabled();
+        if (ImGui::Button("OK", ImVec2(btnW, 0.f))) {
+            undoSystem->Snapshot(StateType::SIMPLIFY, ActiveFunscript());
+            Funscript::OptimizeWavesPreset preset = Funscript::OptimizeWavesPreset::None;
+            if (OptimizeWavesPresetIdx == 1) preset = Funscript::OptimizeWavesPreset::Normalize0_100;
+            else if (OptimizeWavesPresetIdx == 2) preset = Funscript::OptimizeWavesPreset::Quatro;
+            ActiveFunscript()->OptimizeWavesInSelection(OptimizeWavesTolerance, preset);
+            ShowOptimizeWavesDialog = false;
+            ImGui::CloseCurrentPopup();
+        }
+        if (!canApply) ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(btnW, 0.f))) {
+            ShowOptimizeWavesDialog = false;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -2550,6 +2637,9 @@ void OpenFunscripter::ShowMainMenuBar() noexcept
                 const bool canBulkSet = ActiveFunscript() && ActiveFunscript()->HasSelection();
                 if (ImGui::MenuItem("Set position...", nullptr, false, canBulkSet)) {
                     openBulkSetPositionDialog();
+                }
+                if (ImGui::MenuItem("Optimize waves...", nullptr, false, canBulkSet)) {
+                    openOptimizeWavesDialog();
                 }
             }
             ImGui::EndMenu();

@@ -45,6 +45,9 @@ private:
     bool ShowProjectEditor = false;
     bool ShowBulkSetPositionDialog = false;
     int32_t BulkSetPositionValue = 50;
+    bool ShowOptimizeWavesDialog = false;
+    int32_t OptimizeWavesTolerance = 20;
+    int32_t OptimizeWavesPresetIdx = 0; // 0=None, 1=0-100, 2=QUATRO
 #ifndef NDEBUG
     bool DebugDemo = false;
 #endif
@@ -103,6 +106,8 @@ private:
     void isolateAction() noexcept;
     void openBulkSetPositionDialog() noexcept;
     void renderBulkSetPositionDialog() noexcept;
+    void openOptimizeWavesDialog() noexcept;
+    void renderOptimizeWavesDialog() noexcept;
     void repeatLastStroke() noexcept;
 
     void saveProject() noexcept;
