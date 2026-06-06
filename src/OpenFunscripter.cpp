@@ -1612,6 +1612,8 @@ void OpenFunscripter::Step() noexcept
                 }
             }
 
+            renderBulkSetPositionDialog();
+
             webApi->ShowWindow(&ofsState.showWsApi);
             scripting->DrawScriptingMode(NULL);
             LoadedProject->ShowProjectWindow(&ShowProjectEditor);
@@ -2028,6 +2030,59 @@ void OpenFunscripter::pasteSelectionExact() noexcept
     // paste without altering timestamps
     for (auto&& action : CopiedSelection) {
         ActiveFunscript()->AddAction(action);
+    }
+}
+
+void OpenFunscripter::openBulkSetPositionDialog() noexcept
+{
+    if (!ActiveFunscript()->HasSelection()) return;
+    // Seed the dialog with the average of the current selection so
+    // tweaking from "around the existing values" is one keypress away.
+    const auto& sel = ActiveFunscript()->Selection();
+    int64_t sum = 0;
+    for (const auto& a : sel) sum += a.pos;
+    BulkSetPositionValue = (int32_t)(sum / (int64_t)sel.size());
+    ShowBulkSetPositionDialog = true;
+}
+
+void OpenFunscripter::renderBulkSetPositionDialog() noexcept
+{
+    constexpr const char* kPopupId = "Set selected position";
+    if (ShowBulkSetPositionDialog) ImGui::OpenPopup(kPopupId);
+
+    ImGui::SetNextWindowSize(ImVec2(320.f, 0.f), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal(kPopupId, &ShowBulkSetPositionDialog, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking))
+    {
+        const bool hasSel = ActiveFunscript() && ActiveFunscript()->HasSelection();
+        size_t selCount = hasSel ? ActiveFunscript()->Selection().size() : 0;
+        ImGui::Text("Selected actions: %zu", selCount);
+        ImGui::Separator();
+
+        ImGui::SetNextItemWidth(-1.f);
+        if (ImGui::SliderInt("##bulkSetPosSlider", &BulkSetPositionValue, 0, 100, "Position: %d")) {}
+        ImGui::SetNextItemWidth(-1.f);
+        if (ImGui::InputInt("##bulkSetPosInput", &BulkSetPositionValue)) {}
+        BulkSetPositionValue = Util::Clamp<int32_t>(BulkSetPositionValue, 0, 100);
+
+        ImGui::Separator();
+        const float btnW = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+        const bool canApply = hasSel && selCount > 0;
+        if (!canApply) ImGui::BeginDisabled();
+        if (ImGui::Button("OK", ImVec2(btnW, 0.f)))
+        {
+            undoSystem->Snapshot(StateType::ACTIONS_MOVED, ActiveFunscript());
+            ActiveFunscript()->SetSelectionPosition(BulkSetPositionValue);
+            ShowBulkSetPositionDialog = false;
+            ImGui::CloseCurrentPopup();
+        }
+        if (!canApply) ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(btnW, 0.f)))
+        {
+            ShowBulkSetPositionDialog = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
 }
 
@@ -2489,6 +2544,13 @@ void OpenFunscripter::ShowMainMenuBar() noexcept
             }
             if (ImGui::MenuItem(TR(ISOLATE), BINDING_STRING("isolate_action"))) {
                 isolateAction();
+            }
+            ImGui::Separator();
+            {
+                const bool canBulkSet = ActiveFunscript() && ActiveFunscript()->HasSelection();
+                if (ImGui::MenuItem("Set position...", nullptr, false, canBulkSet)) {
+                    openBulkSetPositionDialog();
+                }
             }
             ImGui::EndMenu();
         }

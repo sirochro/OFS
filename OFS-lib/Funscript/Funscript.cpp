@@ -684,6 +684,40 @@ void Funscript::MoveSelectionPosition(int32_t pos_offset) noexcept
 	notifyActionsChanged(true);
 }
 
+void Funscript::SetSelectionPosition(int32_t pos) noexcept
+{
+	OFS_PROFILE(__FUNCTION__);
+	if (!HasSelection()) return;
+	pos = Util::Clamp<int32_t>(pos, 0, 100);
+
+	std::vector<FunscriptAction*> moving;
+
+	// faster path when everything is selected
+	if (data.Selection.size() == data.Actions.size()) {
+		for (auto& action : data.Actions)
+			moving.push_back(&action);
+		for (auto m : moving)
+			m->pos = (int16_t)pos;
+		SelectAll();
+		notifyActionsChanged(true);
+		return;
+	}
+
+	for (auto& find : data.Selection) {
+		auto m = getAction(find);
+		if (m != nullptr)
+			moving.push_back(m);
+	}
+
+	ClearSelection();
+	for (auto m : moving) {
+		m->pos = (int16_t)pos;
+		data.Selection.emplace_back_unsorted(*m);
+	}
+	sortSelection();
+	notifyActionsChanged(true);
+}
+
 void Funscript::SetSelection(const FunscriptArray& actionsToSelect) noexcept
 {
 	OFS_PROFILE(__FUNCTION__);

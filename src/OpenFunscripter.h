@@ -43,6 +43,8 @@ private:
     uint32_t stateHandle = 0xFFFF'FFFF;
     bool ShowMetadataEditor = false;
     bool ShowProjectEditor = false;
+    bool ShowBulkSetPositionDialog = false;
+    int32_t BulkSetPositionValue = 50;
 #ifndef NDEBUG
     bool DebugDemo = false;
 #endif
@@ -99,6 +101,8 @@ private:
     void equalizeSelection() noexcept;
     void invertSelection() noexcept;
     void isolateAction() noexcept;
+    void openBulkSetPositionDialog() noexcept;
+    void renderBulkSetPositionDialog() noexcept;
     void repeatLastStroke() noexcept;
 
     void saveProject() noexcept;

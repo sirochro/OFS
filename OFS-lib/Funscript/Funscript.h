@@ -265,6 +265,7 @@ public:
 	void RemoveSelectedActions() noexcept;
 	void MoveSelectionTime(float time_offset, float frameTime) noexcept;
 	void MoveSelectionPosition(int32_t pos_offset) noexcept;
+	void SetSelectionPosition(int32_t pos) noexcept;
 	inline bool HasSelection() const noexcept { return !data.Selection.empty(); }
 	inline uint32_t SelectionSize() const noexcept { return data.Selection.size(); }
 	inline void ClearSelection() noexcept { data.Selection.clear(); }
