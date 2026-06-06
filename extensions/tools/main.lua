@@ -51,23 +51,28 @@ function render_set_position_panel()
     SetPos.Value, _ = ofs.InputInt("##sp_input", SetPos.Value)
     SetPos.Value = clamp(SetPos.Value, 0, 100)
 
+    -- Delta buttons apply to the current selection the instant they are
+    -- clicked; the slider/input above is independent and only acts when
+    -- the user hits Apply.
     if ofs.Button("-10##sp_minus10") then
-        SetPos.Value = clamp(SetPos.Value - 10, 0, 100)
+        apply_offset_position(-10)
     end
     ofs.SameLine()
     if ofs.Button("+10##sp_plus10") then
-        SetPos.Value = clamp(SetPos.Value + 10, 0, 100)
+        apply_offset_position(10)
     end
 
+    if ofs.Button("Apply##sp_apply") then
+        apply_set_position(SetPos.Value)
+    end
+
+    ofs.Separator()
+    ofs.Text("Preset")
     if ofs.Button("All Btm##sp_btm") then apply_set_position(0)   end
     ofs.SameLine()
     if ofs.Button("All Mid##sp_mid") then apply_set_position(50)  end
     ofs.SameLine()
     if ofs.Button("All Top##sp_top") then apply_set_position(100) end
-
-    if ofs.Button("Apply##sp_apply") then
-        apply_set_position(SetPos.Value)
-    end
 end
 
 function apply_set_position(value)
@@ -77,6 +82,17 @@ function apply_set_position(value)
     for idx, action in ipairs(script.actions) do
         if action.selected then
             action.pos = value
+        end
+    end
+    script:commit()
+end
+
+function apply_offset_position(delta)
+    local script = ofs.Script(ofs.ActiveIdx())
+    if not script:hasSelection() then return end
+    for idx, action in ipairs(script.actions) do
+        if action.selected then
+            action.pos = clamp(action.pos + delta, 0, 100)
         end
     end
     script:commit()

@@ -28,6 +28,16 @@ struct PreferenceState
 
 	int32_t undoLimit = 100;
 
+	// Persisted window geometry (Windowed mode). -1 sentinels mean
+	// "no value saved yet" -- on first launch we fall back to the
+	// hard-coded launch defaults.
+	int32_t windowWidth = -1;
+	int32_t windowHeight = -1;
+	int32_t windowX = -1;
+	int32_t windowY = -1;
+	bool windowMaximized = false;
+	bool windowFullscreen = false;
+
 	static inline PreferenceState& State(uint32_t stateHandle) noexcept {
 		return OFS_AppState<PreferenceState>(stateHandle).Get();
 	}
@@ -44,4 +54,10 @@ REFL_TYPE(PreferenceState)
 	REFL_FIELD(forceHwDecoding)
 	REFL_FIELD(showMetaOnNew)
 	REFL_FIELD(undoLimit)
+	REFL_FIELD(windowWidth)
+	REFL_FIELD(windowHeight)
+	REFL_FIELD(windowX)
+	REFL_FIELD(windowY)
+	REFL_FIELD(windowMaximized)
+	REFL_FIELD(windowFullscreen)
 REFL_END

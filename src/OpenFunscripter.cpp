@@ -184,19 +184,41 @@ bool OpenFunscripter::Init(int argc, char* argv[])
     SDL_Rect display;
     int windowDisplay = SDL_GetWindowDisplayIndex(window);
     SDL_GetDisplayBounds(windowDisplay, &display);
-    // Previously this branch SDL_MaximizeWindow'd whenever the default
-    // launch size was >= the display. That made "Windowed" mode feel
-    // identical to Fullscreen until the user did Fullscreen -> Windowed
-    // toggle (and even then it leaked the maximized state into the
-    // restore rect). Instead, shrink-and-center so the launch view is
-    // already a proper resizable window.
-    if (DefaultWidth >= display.w || DefaultHeight >= display.h) {
+
+    SDL_SetWindowMinimumSize(window, 640, 480);
+
+    // Restore the persisted windowed geometry from the previous session if
+    // one was saved. -1 sentinels mean "first launch / nothing persisted".
+    if (prefState.windowWidth > 0 && prefState.windowHeight > 0) {
+        int w = std::min(prefState.windowWidth,  display.w - 32);
+        int h = std::min(prefState.windowHeight, display.h - 64);
+        if (w < 640) w = 640;
+        if (h < 480) h = 480;
+        SDL_SetWindowSize(window, w, h);
+        int posX = (prefState.windowX >= 0) ? prefState.windowX : SDL_WINDOWPOS_CENTERED;
+        int posY = (prefState.windowY >= 0) ? prefState.windowY : SDL_WINDOWPOS_CENTERED;
+        SDL_SetWindowPosition(window, posX, posY);
+    }
+    else if (DefaultWidth >= display.w || DefaultHeight >= display.h) {
+        // Previously this branch SDL_MaximizeWindow'd whenever the default
+        // launch size was >= the display. That made "Windowed" mode feel
+        // identical to Fullscreen. Shrink-and-center instead.
         int targetW = std::min(DefaultWidth,  display.w - 32);
         int targetH = std::min(DefaultHeight, display.h - 64);
         SDL_SetWindowSize(window, targetW, targetH);
         SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
     }
-    SDL_SetWindowMinimumSize(window, 640, 480);
+
+    // Reapply maximized / fullscreen mode last so SetWindowSize from above
+    // doesn't fight with the native state. Fullscreen wins over maximized
+    // if both were somehow saved as true.
+    if (prefState.windowFullscreen) {
+        SetFullscreen(true);
+        Status |= OFS_Status::OFS_Fullscreen;
+    }
+    else if (prefState.windowMaximized) {
+        SDL_MaximizeWindow(window);
+    }
 
     glContext = SDL_GL_CreateContext(window);
     SDL_GL_MakeCurrent(window, glContext);
@@ -682,6 +704,15 @@ void OpenFunscripter::registerBindings()
                 false },
             Tr::ACTION_REDO, "Utility",
             { { ImGuiMod_Ctrl | ImGuiMod_Shift, ImGuiKey_Z, true } });
+
+        keys->RegisterAction(
+            { "exit_app",
+                [this]() {
+                    exitApp();
+                },
+                false },
+            "Exit", "Utility",
+            { { ImGuiMod_Ctrl, ImGuiKey_Q, false } });
 
         // COPY / PASTE
         keys->RegisterAction(
@@ -1755,6 +1786,30 @@ int OpenFunscripter::Run() noexcept
 
 void OpenFunscripter::Shutdown() noexcept
 {
+    // Capture the current SDL window geometry so the next launch can
+    // restore it. Fullscreen/maximized hide the underlying windowed
+    // geometry from SDL_GetWindowSize, so only refresh width/height/X/Y
+    // when we're actually in a windowed layout.
+    {
+        auto& prefState = PreferenceState::State(preferences->StateHandle());
+        const Uint32 flags = SDL_GetWindowFlags(window);
+        const bool isFullscreen =
+            (flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP)) != 0;
+        const bool isMaximized = (flags & SDL_WINDOW_MAXIMIZED) != 0;
+        prefState.windowFullscreen = isFullscreen;
+        prefState.windowMaximized = isMaximized;
+        if (!isFullscreen && !isMaximized) {
+            int w = 0, h = 0, x = 0, y = 0;
+            SDL_GetWindowSize(window, &w, &h);
+            SDL_GetWindowPosition(window, &x, &y);
+            if (w >= 640 && h >= 480) {
+                prefState.windowWidth = w;
+                prefState.windowHeight = h;
+                prefState.windowX = x;
+                prefState.windowY = y;
+            }
+        }
+    }
     SaveState();
 
     OFS_DynFontAtlas::Shutdown();
@@ -2275,6 +2330,10 @@ void OpenFunscripter::ShowMainMenuBar() noexcept
             }
             if (ImGui::MenuItem(TR(OPEN_BACKUP_DIR))) {
                 Util::OpenFileExplorer(Util::Prefpath("backup").c_str());
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Exit", BINDING_STRING("exit_app"))) {
+                exitApp();
             }
             ImGui::EndMenu();
         }
