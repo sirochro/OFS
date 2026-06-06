@@ -552,10 +552,8 @@ void ScriptTimeline::ShowScriptPositions(
 				{
 					// Bare click on empty area clears the active script's
 					// selection -- the standard desktop idiom.
-					if(auto sc = drawingCtx.ActiveScript().lock())
-					{
-						sc->ClearSelection();
-					}
+					auto& sc = drawingCtx.ActiveScript();
+					if(sc) sc->ClearSelection();
 				}
 			}
 			else
