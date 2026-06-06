@@ -78,18 +78,23 @@ bool OFS_Preferences::ShowPreferenceWindow() noexcept
 					// Display mode: Fullscreen vs Windowed (radio). Used to be a
 					// flat toggle in the Options menu; surfacing it here makes the
 					// windowed alternative obvious and matches the rest of the
-					// preference UI.
+					// preference UI. Apply unconditionally on click rather than
+					// only when the mode index flips -- the OFS auto-maximize at
+					// launch leaves the Status flag unset (= "Windowed" per the
+					// radio) while the window is actually display-sized, so the
+					// only way to force a real windowed layout is to re-trigger
+					// SetFullscreen even when the user clicked the already-
+					// selected radio.
 					{
 						auto app = OpenFunscripter::ptr;
 						const bool isFullscreen = (app->Status & OFS_Status::OFS_Fullscreen) != 0;
 						int mode = isFullscreen ? 0 : 1;
-						const int prev = mode;
 						ImGui::Text("Display mode:");
 						ImGui::SameLine();
-						ImGui::RadioButton("Fullscreen##displayMode", &mode, 0);
+						bool clickFullscreen = ImGui::RadioButton("Fullscreen##displayMode", &mode, 0);
 						ImGui::SameLine();
-						ImGui::RadioButton("Windowed##displayMode",   &mode, 1);
-						if (mode != prev) {
+						bool clickWindowed   = ImGui::RadioButton("Windowed##displayMode",   &mode, 1);
+						if (clickFullscreen || clickWindowed) {
 							const bool wantFullscreen = (mode == 0);
 							app->SetFullscreen(wantFullscreen);
 							app->Status = wantFullscreen

@@ -2643,45 +2643,37 @@ void OpenFunscripter::ShowMainMenuBar() noexcept
 
 void OpenFunscripter::SetFullscreen(bool fullscreen)
 {
-    static SDL_Rect restoreRect = { 0, 0, 1280, 720 };
+    static SDL_Rect restoreRect = { SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720 };
     if (fullscreen) {
         // Only snapshot the current geometry if it actually represents a
         // restorable windowed layout. If the window is currently maximized
-        // (e.g. from the auto-maximize at launch), grabbing its bounds would
-        // store the full display size as the "restore" target, so Windowed
-        // would later look identical to Fullscreen. Fall through to the
-        // existing restoreRect in that case.
+        // (e.g. from the auto-maximize at launch) or already in some
+        // fullscreen variant, grabbing its bounds would store the full
+        // display size as the "restore" target -- so Windowed would later
+        // look identical to Fullscreen. Fall through to the existing
+        // restoreRect in that case.
         Uint32 flags = SDL_GetWindowFlags(window);
         if (!(flags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP))) {
             SDL_GetWindowPosition(window, &restoreRect.x, &restoreRect.y);
             SDL_GetWindowSize(window, &restoreRect.w, &restoreRect.h);
         }
-
-        SDL_SetWindowResizable(window, SDL_FALSE);
-        SDL_SetWindowBordered(window, SDL_FALSE);
-        SDL_SetWindowPosition(window, 0, 0);
-        int display = SDL_GetWindowDisplayIndex(window);
-        SDL_Rect bounds;
-        SDL_GetDisplayBounds(display, &bounds);
-
-#ifdef WIN32
-        // +1 pixel to the height because windows is dumb
-        // when the window has the exact size as the screen windows will do some
-        // bs that causes the screen to flash black when focusing a different window,file picker, etc.
-        SDL_SetWindowSize(window, bounds.w, bounds.h + 1);
-#else
-        SDL_SetWindowSize(window, bounds.w, bounds.h);
-#endif
+        // Use SDL's borderless-desktop fullscreen mode: it handles the
+        // display bounds, borderless flag, and resize lock for us, and
+        // SDL_RestoreWindow / SDL_SetWindowFullscreen(0) cleanly drop the
+        // flag when leaving fullscreen.
+        SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
     }
     else {
-        // SDL_RestoreWindow drops both maximize and fullscreen-desktop states
-        // -- without it, a maximized window swallows SetWindowSize requests
-        // and the user keeps seeing a fullscreen-sized "windowed" layout.
+        // Drop maximized/fullscreen state explicitly. Order matters on
+        // Windows: SetWindowSize is a no-op on a window that still holds
+        // the maximize flag, so RestoreWindow + SetWindowFullscreen(0)
+        // come first, then we re-enable borders / resize, then we resize.
+        SDL_SetWindowFullscreen(window, 0);
         SDL_RestoreWindow(window);
-        SDL_SetWindowResizable(window, SDL_TRUE);
         SDL_SetWindowBordered(window, SDL_TRUE);
-        SDL_SetWindowPosition(window, restoreRect.x, restoreRect.y);
+        SDL_SetWindowResizable(window, SDL_TRUE);
         SDL_SetWindowSize(window, restoreRect.w, restoreRect.h);
+        SDL_SetWindowPosition(window, restoreRect.x, restoreRect.y);
     }
 }
 

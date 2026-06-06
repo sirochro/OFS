@@ -500,6 +500,13 @@ void ScriptTimeline::ShowScriptPositions(
 				auto target = getActionForPoint(drawingCtx, mousePos);
 				float deltaT = target.atS - groupAnchorAtS;
 				int32_t deltaP = (int32_t)target.pos - groupAnchorPos;
+				// Shift held during a group drag locks the X axis (time):
+				// the selection only moves vertically while Shift is held.
+				// Pressing Shift mid-drag snaps the selection's X back to
+				// the anchor; releasing Shift resumes free X movement.
+				if (ImGui::IsKeyDown(ImGuiMod_Shift)) {
+					deltaT = 0.f;
+				}
 				float incrT = deltaT - groupLastAppliedTimeOffset;
 				int32_t incrP = deltaP - groupLastAppliedPosOffset;
 				if(incrT != 0.f || incrP != 0)
