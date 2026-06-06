@@ -39,8 +39,8 @@ static ImGuiID MainDockspaceID;
 static constexpr const char* StatisticsWindowId = "###STATISTICS";
 static constexpr const char* ActionEditorWindowId = "###ACTION_EDITOR";
 
-static constexpr int DefaultWidth = 1920;
-static constexpr int DefaultHeight = 1080;
+static constexpr int DefaultWidth = 1600;
+static constexpr int DefaultHeight = 1200;
 
 static constexpr int AutoBackupIntervalSeconds = 60;
 
@@ -184,9 +184,19 @@ bool OpenFunscripter::Init(int argc, char* argv[])
     SDL_Rect display;
     int windowDisplay = SDL_GetWindowDisplayIndex(window);
     SDL_GetDisplayBounds(windowDisplay, &display);
+    // Previously this branch SDL_MaximizeWindow'd whenever the default
+    // launch size was >= the display. That made "Windowed" mode feel
+    // identical to Fullscreen until the user did Fullscreen -> Windowed
+    // toggle (and even then it leaked the maximized state into the
+    // restore rect). Instead, shrink-and-center so the launch view is
+    // already a proper resizable window.
     if (DefaultWidth >= display.w || DefaultHeight >= display.h) {
-        SDL_MaximizeWindow(window);
+        int targetW = std::min(DefaultWidth,  display.w - 32);
+        int targetH = std::min(DefaultHeight, display.h - 64);
+        SDL_SetWindowSize(window, targetW, targetH);
+        SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
     }
+    SDL_SetWindowMinimumSize(window, 640, 480);
 
     glContext = SDL_GL_CreateContext(window);
     SDL_GL_MakeCurrent(window, glContext);
@@ -2643,36 +2653,41 @@ void OpenFunscripter::ShowMainMenuBar() noexcept
 
 void OpenFunscripter::SetFullscreen(bool fullscreen)
 {
-    static SDL_Rect restoreRect = { SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720 };
+    static SDL_Rect restoreRect = { SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1600, 1200 };
     if (fullscreen) {
-        // Only snapshot the current geometry if it actually represents a
-        // restorable windowed layout. If the window is currently maximized
-        // (e.g. from the auto-maximize at launch) or already in some
-        // fullscreen variant, grabbing its bounds would store the full
-        // display size as the "restore" target -- so Windowed would later
-        // look identical to Fullscreen. Fall through to the existing
-        // restoreRect in that case.
+        // Snapshot the current windowed geometry only if it actually is
+        // windowed -- otherwise we'd capture the maximized/fullscreen
+        // bounds as the "restore" target and Windowed would later look
+        // identical to Fullscreen.
         Uint32 flags = SDL_GetWindowFlags(window);
         if (!(flags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP))) {
             SDL_GetWindowPosition(window, &restoreRect.x, &restoreRect.y);
             SDL_GetWindowSize(window, &restoreRect.w, &restoreRect.h);
         }
-        // Use SDL's borderless-desktop fullscreen mode: it handles the
-        // display bounds, borderless flag, and resize lock for us, and
-        // SDL_RestoreWindow / SDL_SetWindowFullscreen(0) cleanly drop the
-        // flag when leaving fullscreen.
         SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
     }
     else {
-        // Drop maximized/fullscreen state explicitly. Order matters on
-        // Windows: SetWindowSize is a no-op on a window that still holds
-        // the maximize flag, so RestoreWindow + SetWindowFullscreen(0)
-        // come first, then we re-enable borders / resize, then we resize.
+        // Drop every native state that prevents a clean windowed layout.
+        // Order matters on Windows: SetWindowSize is silently ignored on
+        // a window that still holds maximize/fullscreen flags.
         SDL_SetWindowFullscreen(window, 0);
         SDL_RestoreWindow(window);
         SDL_SetWindowBordered(window, SDL_TRUE);
         SDL_SetWindowResizable(window, SDL_TRUE);
-        SDL_SetWindowSize(window, restoreRect.w, restoreRect.h);
+        SDL_SetWindowMinimumSize(window, 640, 480);
+
+        // Cap restoreRect to the active display so a small monitor doesn't
+        // get a window that overflows it (and so SDL doesn't refuse the
+        // requested size). Leave a small margin for the taskbar.
+        int display = SDL_GetWindowDisplayIndex(window);
+        SDL_Rect bounds;
+        SDL_GetDisplayBounds(display, &bounds);
+        int w = std::min(restoreRect.w, bounds.w - 32);
+        int h = std::min(restoreRect.h, bounds.h - 64);
+        if (w < 640) w = 640;
+        if (h < 480) h = 480;
+
+        SDL_SetWindowSize(window, w, h);
         SDL_SetWindowPosition(window, restoreRect.x, restoreRect.y);
     }
 }
