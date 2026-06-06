@@ -10,6 +10,7 @@
 #include "OFS_Reflection.h"
 #include "OFS_StateHandle.h"
 #include "state/states/BaseOverlayState.h"
+#include "FunscriptUndoSystem.h"
 
 OFS_Preferences::OFS_Preferences() noexcept
 {
@@ -71,10 +72,46 @@ bool OFS_Preferences::ShowPreferenceWindow() noexcept
 						SetTheme((OFS_Theme)state.currentTheme);
 						save = true;
 					}
-					
+
+					ImGui::Separator();
+
+					// Display mode: Fullscreen vs Windowed (radio). Used to be a
+					// flat toggle in the Options menu; surfacing it here makes the
+					// windowed alternative obvious and matches the rest of the
+					// preference UI.
+					{
+						auto app = OpenFunscripter::ptr;
+						const bool isFullscreen = (app->Status & OFS_Status::OFS_Fullscreen) != 0;
+						int mode = isFullscreen ? 0 : 1;
+						const int prev = mode;
+						ImGui::Text("Display mode:");
+						ImGui::SameLine();
+						ImGui::RadioButton("Fullscreen##displayMode", &mode, 0);
+						ImGui::SameLine();
+						ImGui::RadioButton("Windowed##displayMode",   &mode, 1);
+						if (mode != prev) {
+							const bool wantFullscreen = (mode == 0);
+							app->SetFullscreen(wantFullscreen);
+							app->Status = wantFullscreen
+								? (uint8_t)(app->Status | OFS_Status::OFS_Fullscreen)
+								: (uint8_t)(app->Status & ~OFS_Status::OFS_Fullscreen);
+						}
+					}
+
 					ImGui::Separator();
 
 					ImGui::TextWrapped(TR(PREFERENCES_TXT));
+
+					// Undo history limit: max snapshots retained per script.
+					// Pushed through to FunscriptUndoSystem::StackLimit so the
+					// limit takes effect immediately, not just on restart.
+					if (ImGui::InputInt("Undo history limit##undoLimit", &state.undoLimit, 1, 10)) {
+						state.undoLimit = Util::Clamp(state.undoLimit, 10, 10000);
+						FunscriptUndoSystem::StackLimit = state.undoLimit;
+						save = true;
+					}
+					OFS::Tooltip("Maximum number of undo states retained (default 100). Higher = more memory used per script.");
+
 					if (ImGui::InputInt(TR(FRAME_LIMIT), &state.framerateLimit, 1, 10)) {
 						state.framerateLimit = Util::Clamp(state.framerateLimit, 60, 300);
 						save = true;

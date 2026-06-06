@@ -44,19 +44,23 @@ void ScriptTimeline::updateSelection(const OverlayDrawingCtx& ctx, bool clear) n
 	if(selectionInterval <= 0.008f) // 8ms
 		return;
 
+	// Toggle (Shift+drag) inherently means "do not clear" so each covered
+	// action XORs against the existing selection — SelectRect/SelectTime
+	// already use ToggleSelection internally.
+	const bool effectiveClear = clear && !IsToggleSelecting;
+
 	if (IsRectSelecting) {
-		// Convert relative Y (0=top, 1=bottom) to pos (0=bottom, 100=top).
 		float yMinRel = std::min(relSel1Y, relSel2Y);
 		float yMaxRel = std::max(relSel1Y, relSel2Y);
 		int32_t maxPos = (int32_t)std::round((1.f - yMinRel) * 100.f);
 		int32_t minPos = (int32_t)std::round((1.f - yMaxRel) * 100.f);
 		if (minPos < 0) minPos = 0;
 		if (maxPos > 100) maxPos = 100;
-		EV::Enqueue<FunscriptShouldSelectRectEvent>(startTime, endTime, minPos, maxPos, clear, ctx.ActiveScript());
+		EV::Enqueue<FunscriptShouldSelectRectEvent>(startTime, endTime, minPos, maxPos, effectiveClear, ctx.ActiveScript());
 		return;
 	}
 
-	EV::Enqueue<FunscriptShouldSelectTimeEvent>(startTime, endTime, clear, ctx.ActiveScript());
+	EV::Enqueue<FunscriptShouldSelectTimeEvent>(startTime, endTime, effectiveClear, ctx.ActiveScript());
 }
 
 void ScriptTimeline::FfmpegAudioProcessingFinished(const WaveformProcessingFinishedEvent* ev) noexcept
@@ -169,33 +173,50 @@ void ScriptTimeline::handleTimelineHover(const OverlayDrawingCtx& ctx) noexcept
 
 bool ScriptTimeline::handleTimelineClicks(const OverlayDrawingCtx& ctx) noexcept
 {
-	bool moveOrAddPointModifer = ImGui::IsKeyDown(ImGuiMod_Shift);
+	const bool shiftHeld = ImGui::IsKeyDown(ImGuiMod_Shift);
 	auto mousePos = ImGui::GetMousePos();
 
 	auto leftMouseClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
-	if(ctx.activeScriptIdx == ctx.drawingScriptIdx && BaseOverlay::PointSize >= 4.f) 
+	if(ctx.activeScriptIdx == ctx.drawingScriptIdx && BaseOverlay::PointSize >= 4.f)
 	{
 		auto startIt = ctx.DrawingScript()->Actions().begin() + ctx.actionFromIdx;
 		auto endIt = ctx.DrawingScript()->Actions().begin() + ctx.actionToIdx;
-		for (; startIt != endIt; ++startIt) 
+		for (; startIt != endIt; ++startIt)
 		{
 			auto point = BaseOverlay::GetPointForAction(ctx, *startIt);
 			const ImVec2 size(BaseOverlay::PointSize, BaseOverlay::PointSize);
 			ImRect rect(point - size, point + size);
 			bool mouseOnPoint = rect.Contains(mousePos);
-			
+
 			if(mouseOnPoint)
 			{
 				ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 			}
 
-			if (!moveOrAddPointModifer && mouseOnPoint && leftMouseClicked) {
-				EV::Enqueue<FunscriptActionClickedEvent>(*startIt, ctx.DrawingScript());
+			if (!shiftHeld && mouseOnPoint && leftMouseClicked) {
+				// Click on a point with no modifier:
+				//   - If the point is already in the selection: arm a group drag.
+				//     Mouse movement past threshold promotes it to active drag in
+				//     ShowScriptPositions; release without movement still fires
+				//     the click event so the existing seek-on-click behavior
+				//     remains intact.
+				//   - Otherwise: legacy behavior, fire click event immediately.
+				if (ctx.DrawingScript()->IsSelected(*startIt)) {
+					IsGroupMovingPotential = true;
+					IsGroupMovingActive = false;
+					GroupMovingScriptIdx = ctx.drawingScriptIdx;
+					groupAnchorAtS = startIt->atS;
+					groupAnchorPos = startIt->pos;
+					groupLastAppliedTimeOffset = 0.f;
+					groupLastAppliedPosOffset = 0;
+				} else {
+					EV::Enqueue<FunscriptActionClickedEvent>(*startIt, ctx.DrawingScript());
+				}
 				return true;
 			}
-			else if(moveOrAddPointModifer && IsMovingIdx < 0 && mouseOnPoint && leftMouseClicked)
+			else if(shiftHeld && IsMovingIdx < 0 && mouseOnPoint && leftMouseClicked)
 			{
-				// Start dragging action
+				// Shift + click on a point: legacy single-point drag.
 				ctx.DrawingScript()->ClearSelection();
 				ctx.DrawingScript()->SetSelected(*startIt, true);
 				IsMovingIdx = ctx.drawingScriptIdx;
@@ -205,15 +226,8 @@ bool ScriptTimeline::handleTimelineClicks(const OverlayDrawingCtx& ctx) noexcept
 		}
 	}
 
-	if(moveOrAddPointModifer && leftMouseClicked)
+	if(ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
 	{
-		auto newAction = getActionForPoint(ctx, mousePos);
-		EV::Enqueue<FunscriptActionShouldCreateEvent>(newAction, ctx.DrawingScript());
-		return true;
-	}
-	else if(ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-	{
-		auto mousePos = ImGui::GetMousePos();
 		float relX = (mousePos.x - ctx.canvasPos.x) / ctx.canvasSize.x;
 		float seekToTime = ctx.offsetTime + (visibleTime * relX);
 		EV::Enqueue<ShouldSetTimeEvent>(seekToTime);
@@ -230,12 +244,15 @@ bool ScriptTimeline::handleTimelineClicks(const OverlayDrawingCtx& ctx) noexcept
 	}
 	else if(leftMouseClicked)
 	{
-		// Begin selection. Mode is locked at drag start:
-		//   default        -> 2D rectangle (rect-select)
-		//   Alt + drag     -> legacy time-band selection
-		// Releasing/re-pressing Alt mid-drag does not switch modes.
+		// Begin selection. Mode locked at drag start:
+		//   default       -> rect select (replace)
+		//   Shift + drag  -> rect select (toggle/XOR with current selection)
+		//   Alt   + drag  -> legacy time-band selection
+		// Shift + click without movement is deferred to release and fires
+		// FunscriptActionShouldCreateEvent (the legacy "new point" gesture).
 		IsSelecting = true;
 		IsRectSelecting = !ImGui::IsKeyDown(ImGuiMod_Alt);
+		IsToggleSelecting = shiftHeld;
 		float relSel1 = (mousePos.x - ctx.canvasPos.x) / ctx.canvasSize.x;
 		relSel2 = relSel1;
 		absSel1 = ctx.offsetTime + (visibleTime * relSel1);
@@ -403,31 +420,38 @@ void ScriptTimeline::ShowScriptPositions(
 		// selection box
 		constexpr auto selectColor = IM_COL32(3, 252, 207, 255);
 		constexpr auto selectColorBackground = IM_COL32(3, 252, 207, 100);
+		// Shift+drag (toggle/XOR) uses a warmer color so the user can tell
+		// at a glance that the gesture will XOR with the existing selection
+		// rather than replace it.
+		constexpr auto toggleColor = IM_COL32(252, 207, 3, 255);
+		constexpr auto toggleColorBackground = IM_COL32(252, 207, 3, 100);
 		if (IsSelecting && (i == activeScriptIdx)) {
+			const auto edgeColor = IsToggleSelecting ? toggleColor : selectColor;
+			const auto fillColor = IsToggleSelecting ? toggleColorBackground : selectColorBackground;
 			float relSel1 = (absSel1 - drawingCtx.offsetTime) / visibleTime;
 			float yTop = IsRectSelecting ? (drawingCtx.canvasSize.y * std::min(relSel1Y, relSel2Y)) : 0.f;
 			float yBot = IsRectSelecting ? (drawingCtx.canvasSize.y * std::max(relSel1Y, relSel2Y)) : drawingCtx.canvasSize.y;
 			drawingCtx.drawList->AddRectFilled(
 				drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel1, yTop),
 				drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel2, yBot),
-				selectColorBackground);
+				fillColor);
 			drawingCtx.drawList->AddLine(
 				drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel1, yTop),
 				drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel1, yBot),
-				selectColor, 3.0f);
+				edgeColor, 3.0f);
 			drawingCtx.drawList->AddLine(
 				drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel2, yTop),
 				drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel2, yBot),
-				selectColor, 3.0f);
+				edgeColor, 3.0f);
 			if (IsRectSelecting) {
 				drawingCtx.drawList->AddLine(
 					drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel1, yTop),
 					drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel2, yTop),
-					selectColor, 3.0f);
+					edgeColor, 3.0f);
 				drawingCtx.drawList->AddLine(
 					drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel1, yBot),
 					drawingCtx.canvasPos + ImVec2(drawingCtx.canvasSize.x * relSel2, yBot),
-					selectColor, 3.0f);
+					edgeColor, 3.0f);
 			}
 		}
 
@@ -445,7 +469,7 @@ void ScriptTimeline::ShowScriptPositions(
 		if(ItemIsHovered && handleTimelineClicks(drawingCtx)) { /* click was handled */ }
 		else if(drawingCtx.drawingScriptIdx == IsMovingIdx)
 		{
-			if(ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.f)) 
+			if(ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.f))
 			{
 				// Update dragged action
 				auto mousePos = ImGui::GetMousePos();
@@ -458,12 +482,91 @@ void ScriptTimeline::ShowScriptPositions(
 				IsMovingIdx = -1;
 			}
 		}
+		else if(drawingCtx.drawingScriptIdx == GroupMovingScriptIdx && (IsGroupMovingPotential || IsGroupMovingActive))
+		{
+			// Group drag: armed on press over a selected point; promotes to
+			// active once the cursor moves past the imgui drag threshold.
+			// Each frame we feed the incremental delta to the script so the
+			// whole selection follows the cursor in lockstep.
+			constexpr float kDragThresholdPx = 4.f;
+			if(ImGui::IsMouseDragging(ImGuiMouseButton_Left, kDragThresholdPx))
+			{
+				if(!IsGroupMovingActive)
+				{
+					IsGroupMovingActive = true;
+					EV::Enqueue<FunscriptSelectionShouldMoveEvent>(0.f, 0, true, scripts[i]);
+				}
+				auto mousePos = ImGui::GetMousePos();
+				auto target = getActionForPoint(drawingCtx, mousePos);
+				float deltaT = target.atS - groupAnchorAtS;
+				int32_t deltaP = (int32_t)target.pos - groupAnchorPos;
+				float incrT = deltaT - groupLastAppliedTimeOffset;
+				int32_t incrP = deltaP - groupLastAppliedPosOffset;
+				if(incrT != 0.f || incrP != 0)
+				{
+					EV::Enqueue<FunscriptSelectionShouldMoveEvent>(incrT, incrP, false, scripts[i]);
+					groupLastAppliedTimeOffset = deltaT;
+					groupLastAppliedPosOffset = deltaP;
+				}
+			}
+			else if(ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+			{
+				// Released without ever crossing the drag threshold -- this
+				// was a click on a selected point. Preserve OFS's existing
+				// seek-on-click by sending the player to the anchor time.
+				if(!IsGroupMovingActive)
+				{
+					EV::Enqueue<ShouldSetTimeEvent>(groupAnchorAtS);
+				}
+				IsGroupMovingPotential = false;
+				IsGroupMovingActive = false;
+				GroupMovingScriptIdx = -1;
+				groupLastAppliedTimeOffset = 0.f;
+				groupLastAppliedPosOffset = 0;
+			}
+		}
 		else if(IsSelecting && ImGui::IsMouseReleased(ImGuiMouseButton_Left))
 		{
 			IsSelecting = false;
-			bool clearSelection = !(SDL_GetModState() & KMOD_CTRL);
-			updateSelection(drawingCtx, clearSelection);
+
+			// Distinguish click vs drag using imgui's drag-delta threshold.
+			// A tiny delta means the mouse was released without ever crossing
+			// the threshold -- treat as a click.
+			const auto dragDelta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.f);
+			const float distSq = dragDelta.x * dragDelta.x + dragDelta.y * dragDelta.y;
+			constexpr float kClickThresholdSq = 16.f; // 4 px
+			const bool wasClick = distSq < kClickThresholdSq;
+
+			if(wasClick)
+			{
+				if(IsToggleSelecting)
+				{
+					// Shift + click on empty area: legacy "create new point"
+					// gesture preserved from before Shift was reassigned to
+					// the toggle-rect modifier.
+					auto mp = ImGui::GetMousePos();
+					auto newAction = getActionForPoint(drawingCtx, mp);
+					EV::Enqueue<FunscriptActionShouldCreateEvent>(newAction, drawingCtx.DrawingScript());
+				}
+				else
+				{
+					// Bare click on empty area clears the active script's
+					// selection -- the standard desktop idiom.
+					if(auto sc = drawingCtx.ActiveScript().lock())
+					{
+						sc->ClearSelection();
+					}
+				}
+			}
+			else
+			{
+				const bool ctrlHeld = (SDL_GetModState() & KMOD_CTRL) != 0;
+				const bool clearSelection = !ctrlHeld;
+				updateSelection(drawingCtx, clearSelection);
+			}
+
 			IsRectSelecting = false;
+			IsToggleSelecting = false;
 		}
 		else if(IsMovingIdx < 0 && ItemIsHovered)
 		{

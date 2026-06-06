@@ -43,11 +43,6 @@ private:
     uint32_t stateHandle = 0xFFFF'FFFF;
     bool ShowMetadataEditor = false;
     bool ShowProjectEditor = false;
-    bool ShowBulkSetPositionDialog = false;
-    int32_t BulkSetPositionValue = 50;
-    bool ShowOptimizeWavesDialog = false;
-    int32_t OptimizeWavesTolerance = 20;
-    int32_t OptimizeWavesPresetIdx = 0; // 0=None, 1=0-100, 2=QUATRO
 #ifndef NDEBUG
     bool DebugDemo = false;
 #endif
@@ -91,6 +86,7 @@ private:
     void ScriptTimelineDoubleClick(const ShouldSetTimeEvent* ev) noexcept;
     void ScriptTimelineSelectTime(const FunscriptShouldSelectTimeEvent* ev) noexcept;
     void ScriptTimelineSelectRect(const FunscriptShouldSelectRectEvent* ev) noexcept;
+    void ScriptTimelineSelectionMoved(const FunscriptSelectionShouldMoveEvent* ev) noexcept;
     void ScriptTimelineActiveScriptChanged(const ShouldChangeActiveScriptEvent* ev) noexcept;
 
     void selectTopPoints() noexcept;
@@ -104,10 +100,6 @@ private:
     void equalizeSelection() noexcept;
     void invertSelection() noexcept;
     void isolateAction() noexcept;
-    void openBulkSetPositionDialog() noexcept;
-    void renderBulkSetPositionDialog() noexcept;
-    void openOptimizeWavesDialog() noexcept;
-    void renderOptimizeWavesDialog() noexcept;
     void repeatLastStroke() noexcept;
 
     void saveProject() noexcept;
@@ -128,7 +120,6 @@ private:
     void initProject() noexcept;
     bool closeProject(bool closeWithUnsavedChanges) noexcept;
 
-    void SetFullscreen(bool fullscreen);
     void setupDefaultLayout(bool force) noexcept;
 
     template<typename OnCloseAction>
@@ -144,6 +135,7 @@ private:
 public:
     static OpenFunscripter* ptr;
     uint8_t Status = OFS_Status::OFS_AutoBackup;
+    void SetFullscreen(bool fullscreen);
 
     ~OpenFunscripter() noexcept;
 

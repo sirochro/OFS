@@ -26,6 +26,8 @@ struct PreferenceState
 	bool forceHwDecoding = false;
 	bool showMetaOnNew = true;
 
+	int32_t undoLimit = 100;
+
 	static inline PreferenceState& State(uint32_t stateHandle) noexcept {
 		return OFS_AppState<PreferenceState>(stateHandle).Get();
 	}
@@ -41,4 +43,5 @@ REFL_TYPE(PreferenceState)
 	REFL_FIELD(framerateLimit)
 	REFL_FIELD(forceHwDecoding)
 	REFL_FIELD(showMetaOnNew)
+	REFL_FIELD(undoLimit)
 REFL_END

@@ -221,6 +221,11 @@ bool OpenFunscripter::Init(int argc, char* argv[])
     }
 
     playerControls.Init(player.get(), prefState.forceHwDecoding);
+    // Wire the persisted history limit into the undo systems before the
+    // first undo stack is constructed so the initial reserve matches.
+    if (prefState.undoLimit > 0) {
+        FunscriptUndoSystem::StackLimit = Util::Clamp<int32_t>(prefState.undoLimit, 10, 10000);
+    }
     undoSystem = std::make_unique<UndoSystem>();
 
     keys = std::make_unique<OFS_KeybindingSystem>();
@@ -255,6 +260,8 @@ bool OpenFunscripter::Init(int argc, char* argv[])
         FunscriptShouldSelectTimeEvent::HandleEvent(EVENT_SYSTEM_BIND(this, &OpenFunscripter::ScriptTimelineSelectTime)));
     EV::Queue().appendListener(FunscriptShouldSelectRectEvent::EventType,
         FunscriptShouldSelectRectEvent::HandleEvent(EVENT_SYSTEM_BIND(this, &OpenFunscripter::ScriptTimelineSelectRect)));
+    EV::Queue().appendListener(FunscriptSelectionShouldMoveEvent::EventType,
+        FunscriptSelectionShouldMoveEvent::HandleEvent(EVENT_SYSTEM_BIND(this, &OpenFunscripter::ScriptTimelineSelectionMoved)));
     EV::Queue().appendListener(ShouldChangeActiveScriptEvent::EventType,
         ShouldChangeActiveScriptEvent::HandleEvent(EVENT_SYSTEM_BIND(this, &OpenFunscripter::ScriptTimelineActiveScriptChanged)));
     EV::Queue().appendListener(ExportClipForChapter::EventType,
@@ -664,7 +671,7 @@ void OpenFunscripter::registerBindings()
                 },
                 false },
             Tr::ACTION_REDO, "Utility",
-            { { ImGuiMod_Ctrl, ImGuiKey_Y, true } });
+            { { ImGuiMod_Ctrl | ImGuiMod_Shift, ImGuiKey_Z, true } });
 
         // COPY / PASTE
         keys->RegisterAction(
@@ -1612,8 +1619,6 @@ void OpenFunscripter::Step() noexcept
                 }
             }
 
-            renderBulkSetPositionDialog();
-            renderOptimizeWavesDialog();
 
             webApi->ShowWindow(&ofsState.showWsApi);
             scripting->DrawScriptingMode(NULL);
@@ -2031,145 +2036,6 @@ void OpenFunscripter::pasteSelectionExact() noexcept
     // paste without altering timestamps
     for (auto&& action : CopiedSelection) {
         ActiveFunscript()->AddAction(action);
-    }
-}
-
-void OpenFunscripter::openBulkSetPositionDialog() noexcept
-{
-    if (!ActiveFunscript()->HasSelection()) return;
-    // Seed the dialog with the average of the current selection so
-    // tweaking from "around the existing values" is one keypress away.
-    const auto& sel = ActiveFunscript()->Selection();
-    int64_t sum = 0;
-    for (const auto& a : sel) sum += a.pos;
-    BulkSetPositionValue = (int32_t)(sum / (int64_t)sel.size());
-    ShowBulkSetPositionDialog = true;
-}
-
-void OpenFunscripter::renderBulkSetPositionDialog() noexcept
-{
-    constexpr const char* kPopupId = "Set selected position";
-    if (ShowBulkSetPositionDialog) ImGui::OpenPopup(kPopupId);
-
-    ImGui::SetNextWindowSize(ImVec2(320.f, 0.f), ImGuiCond_Appearing);
-    if (ImGui::BeginPopupModal(kPopupId, &ShowBulkSetPositionDialog, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking))
-    {
-        const bool hasSel = ActiveFunscript() && ActiveFunscript()->HasSelection();
-        size_t selCount = hasSel ? ActiveFunscript()->Selection().size() : 0;
-        ImGui::Text("Selected actions: %zu", selCount);
-        ImGui::Separator();
-
-        ImGui::SetNextItemWidth(-1.f);
-        if (ImGui::SliderInt("##bulkSetPosSlider", &BulkSetPositionValue, 0, 100, "Position: %d")) {}
-        ImGui::SetNextItemWidth(-1.f);
-        if (ImGui::InputInt("##bulkSetPosInput", &BulkSetPositionValue)) {}
-        BulkSetPositionValue = Util::Clamp<int32_t>(BulkSetPositionValue, 0, 100);
-
-        const float spacing = ImGui::GetStyle().ItemSpacing.x;
-        const bool canApply = hasSel && selCount > 0;
-
-        // Nudge buttons: adjust the input value only; OK still applies.
-        const float nudgeW = (ImGui::GetContentRegionAvail().x - spacing) * 0.5f;
-        if (ImGui::Button("-10", ImVec2(nudgeW, 0.f))) {
-            BulkSetPositionValue = Util::Clamp<int32_t>(BulkSetPositionValue - 10, 0, 100);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("+10", ImVec2(nudgeW, 0.f))) {
-            BulkSetPositionValue = Util::Clamp<int32_t>(BulkSetPositionValue + 10, 0, 100);
-        }
-
-        ImGui::Separator();
-
-        // Quick-set buttons: immediate apply + close (undo captured).
-        auto applyAndClose = [&](int32_t v) {
-            undoSystem->Snapshot(StateType::ACTIONS_MOVED, ActiveFunscript());
-            ActiveFunscript()->SetSelectionPosition(v);
-            BulkSetPositionValue = v;
-            ShowBulkSetPositionDialog = false;
-            ImGui::CloseCurrentPopup();
-        };
-
-        if (!canApply) ImGui::BeginDisabled();
-        const float quickW = (ImGui::GetContentRegionAvail().x - spacing * 2.f) / 3.f;
-        if (ImGui::Button("All Btm", ImVec2(quickW, 0.f))) applyAndClose(0);
-        ImGui::SameLine();
-        if (ImGui::Button("All Mid", ImVec2(quickW, 0.f))) applyAndClose(50);
-        ImGui::SameLine();
-        if (ImGui::Button("All Top", ImVec2(quickW, 0.f))) applyAndClose(100);
-        if (!canApply) ImGui::EndDisabled();
-
-        ImGui::Separator();
-
-        const float btnW = (ImGui::GetContentRegionAvail().x - spacing) * 0.5f;
-        if (!canApply) ImGui::BeginDisabled();
-        if (ImGui::Button("OK", ImVec2(btnW, 0.f)))
-        {
-            undoSystem->Snapshot(StateType::ACTIONS_MOVED, ActiveFunscript());
-            ActiveFunscript()->SetSelectionPosition(BulkSetPositionValue);
-            ShowBulkSetPositionDialog = false;
-            ImGui::CloseCurrentPopup();
-        }
-        if (!canApply) ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(btnW, 0.f)))
-        {
-            ShowBulkSetPositionDialog = false;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
-    }
-}
-
-void OpenFunscripter::openOptimizeWavesDialog() noexcept
-{
-    if (!ActiveFunscript() || !ActiveFunscript()->HasSelection()) return;
-    ShowOptimizeWavesDialog = true;
-}
-
-void OpenFunscripter::renderOptimizeWavesDialog() noexcept
-{
-    constexpr const char* kPopupId = "Optimize waves";
-    if (ShowOptimizeWavesDialog) ImGui::OpenPopup(kPopupId);
-
-    ImGui::SetNextWindowSize(ImVec2(360.f, 0.f), ImGuiCond_Appearing);
-    if (ImGui::BeginPopupModal(kPopupId, &ShowOptimizeWavesDialog, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking))
-    {
-        const bool hasSel = ActiveFunscript() && ActiveFunscript()->HasSelection();
-        const size_t selCount = hasSel ? ActiveFunscript()->Selection().size() : 0;
-        ImGui::Text("Selected actions: %zu", selCount);
-        ImGui::Separator();
-
-        ImGui::SetNextItemWidth(-1.f);
-        ImGui::SliderInt("##optWaveTol", &OptimizeWavesTolerance, 0, 100, "Tolerance: %d");
-        OptimizeWavesTolerance = Util::Clamp<int32_t>(OptimizeWavesTolerance, 0, 100);
-
-        ImGui::Separator();
-        ImGui::Text("Preset:");
-        ImGui::RadioButton("None (wobble removal only)", &OptimizeWavesPresetIdx, 0);
-        ImGui::RadioButton("0-100 (force endpoints)",    &OptimizeWavesPresetIdx, 1);
-        ImGui::RadioButton("QUATRO (4-point quartile)",  &OptimizeWavesPresetIdx, 2);
-
-        ImGui::Separator();
-        const float spacing = ImGui::GetStyle().ItemSpacing.x;
-        const float btnW = (ImGui::GetContentRegionAvail().x - spacing) * 0.5f;
-        const bool canApply = hasSel && selCount >= 2;
-        if (!canApply) ImGui::BeginDisabled();
-        if (ImGui::Button("OK", ImVec2(btnW, 0.f))) {
-            undoSystem->Snapshot(StateType::SIMPLIFY, ActiveFunscript());
-            Funscript::OptimizeWavesPreset preset = Funscript::OptimizeWavesPreset::None;
-            if (OptimizeWavesPresetIdx == 1) preset = Funscript::OptimizeWavesPreset::Normalize0_100;
-            else if (OptimizeWavesPresetIdx == 2) preset = Funscript::OptimizeWavesPreset::Quatro;
-            ActiveFunscript()->OptimizeWavesInSelection(OptimizeWavesTolerance, preset);
-            ShowOptimizeWavesDialog = false;
-            ImGui::CloseCurrentPopup();
-        }
-        if (!canApply) ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(btnW, 0.f))) {
-            ShowOptimizeWavesDialog = false;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
     }
 }
 
@@ -2632,16 +2498,6 @@ void OpenFunscripter::ShowMainMenuBar() noexcept
             if (ImGui::MenuItem(TR(ISOLATE), BINDING_STRING("isolate_action"))) {
                 isolateAction();
             }
-            ImGui::Separator();
-            {
-                const bool canBulkSet = ActiveFunscript() && ActiveFunscript()->HasSelection();
-                if (ImGui::MenuItem("Set position...", nullptr, false, canBulkSet)) {
-                    openBulkSetPositionDialog();
-                }
-                if (ImGui::MenuItem("Optimize waves...", nullptr, false, canBulkSet)) {
-                    openOptimizeWavesDialog();
-                }
-            }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu(TR_ID("VIEW_MENU", Tr::VIEW_MENU))) {
@@ -2720,13 +2576,7 @@ void OpenFunscripter::ShowMainMenuBar() noexcept
             if (ImGui::MenuItem(TR(KEYS))) {
                 keys->ShowModal();
             }
-            bool fullscreenTmp = Status & OFS_Status::OFS_Fullscreen;
-            if (ImGui::MenuItem(TR(FULLSCREEN), BINDING_STRING("fullscreen_toggle"), &fullscreenTmp)) {
-                SetFullscreen(fullscreenTmp);
-                Status = fullscreenTmp
-                    ? Status | OFS_Status::OFS_Fullscreen
-                    : Status ^ OFS_Status::OFS_Fullscreen;
-            }
+            // Display mode (Fullscreen/Windowed) lives in Preferences -> Application now.
             if (ImGui::MenuItem(TR(PREFERENCES), nullptr, &preferences->ShowWindow)) {}
             if (ImGui::BeginMenu(TR(CONTROLLER), ControllerInput::AnythingConnected())) {
                 ImGui::TextColored(ImColor(IM_COL32(0, 255, 0, 255)), "%s", TR(CONTROLLER_CONNECTED));
@@ -2795,8 +2645,17 @@ void OpenFunscripter::SetFullscreen(bool fullscreen)
 {
     static SDL_Rect restoreRect = { 0, 0, 1280, 720 };
     if (fullscreen) {
-        SDL_GetWindowPosition(window, &restoreRect.x, &restoreRect.y);
-        SDL_GetWindowSize(window, &restoreRect.w, &restoreRect.h);
+        // Only snapshot the current geometry if it actually represents a
+        // restorable windowed layout. If the window is currently maximized
+        // (e.g. from the auto-maximize at launch), grabbing its bounds would
+        // store the full display size as the "restore" target, so Windowed
+        // would later look identical to Fullscreen. Fall through to the
+        // existing restoreRect in that case.
+        Uint32 flags = SDL_GetWindowFlags(window);
+        if (!(flags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP))) {
+            SDL_GetWindowPosition(window, &restoreRect.x, &restoreRect.y);
+            SDL_GetWindowSize(window, &restoreRect.w, &restoreRect.h);
+        }
 
         SDL_SetWindowResizable(window, SDL_FALSE);
         SDL_SetWindowBordered(window, SDL_FALSE);
@@ -2815,6 +2674,10 @@ void OpenFunscripter::SetFullscreen(bool fullscreen)
 #endif
     }
     else {
+        // SDL_RestoreWindow drops both maximize and fullscreen-desktop states
+        // -- without it, a maximized window swallows SetWindowSize requests
+        // and the user keeps seeing a fullscreen-sized "windowed" layout.
+        SDL_RestoreWindow(window);
         SDL_SetWindowResizable(window, SDL_TRUE);
         SDL_SetWindowBordered(window, SDL_TRUE);
         SDL_SetWindowPosition(window, restoreRect.x, restoreRect.y);
@@ -2974,6 +2837,19 @@ void OpenFunscripter::ScriptTimelineSelectRect(const FunscriptShouldSelectRectEv
     OFS_PROFILE(__FUNCTION__);
     if (auto script = ev->script.lock()) {
         script->SelectRect(ev->startTime, ev->endTime, ev->minPos, ev->maxPos, ev->clearSelection);
+    }
+}
+
+void OpenFunscripter::ScriptTimelineSelectionMoved(const FunscriptSelectionShouldMoveEvent* ev) noexcept
+{
+    OFS_PROFILE(__FUNCTION__);
+    if (auto script = ev->script.lock()) {
+        if (ev->started) {
+            undoSystem->Snapshot(StateType::ACTIONS_MOVED, script);
+            return;
+        }
+        if (ev->deltaPos != 0) script->MoveSelectionPosition(ev->deltaPos);
+        if (ev->deltaTime != 0.f) script->MoveSelectionTime(ev->deltaTime, scripting->LogicalFrameTime());
     }
 }
 

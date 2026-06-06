@@ -23,7 +23,7 @@ class FunscriptUndoSystem
 
 	Funscript* script = nullptr;
 	void SnapshotRedo(int32_t type) noexcept;
-	
+
 	std::vector<ScriptState> UndoStack;
 	std::vector<ScriptState> RedoStack;
 
@@ -32,10 +32,17 @@ class FunscriptUndoSystem
 	bool Redo() noexcept;
 	void ClearRedo() noexcept;
 public:
+	// Maximum entries retained on the undo (and redo) stack. Both
+	// FunscriptUndoSystem and the project-level UndoSystem read from this
+	// global so the user-visible "history limit" is a single number.
+	// Updated from PreferenceState::undoLimit at startup and whenever the
+	// preference changes.
+	static int32_t StackLimit;
+
 	FunscriptUndoSystem(Funscript* script) : script(script) {
 		FUN_ASSERT(script != nullptr, "no script");
-		UndoStack.reserve(1000);
-		RedoStack.reserve(100);
+		UndoStack.reserve(StackLimit);
+		RedoStack.reserve(StackLimit);
 	}
 
 	inline bool MatchUndoTop(int32_t type) const noexcept { return !UndoEmpty() && UndoStack.back().type == type; }

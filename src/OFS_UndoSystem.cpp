@@ -59,8 +59,9 @@ const char* UndoSystem::UndoContext::Description() const noexcept
 
 UndoSystem::UndoSystem() noexcept
 {
-    RedoStack.reserve(100);
-    UndoStack.reserve(1000);
+    const int32_t limit = FunscriptUndoSystem::StackLimit > 0 ? FunscriptUndoSystem::StackLimit : 100;
+    RedoStack.reserve(limit);
+    UndoStack.reserve(limit);
 }
 
 void UndoSystem::ShowUndoRedoHistory(bool* open) noexcept
@@ -102,6 +103,15 @@ void UndoSystem::Snapshot(StateType type, UndoContextScripts&& scriptsToSnapshot
 {
     OFS_PROFILE(__FUNCTION__);
     auto context = UndoStack.emplace_back(std::move(scriptsToSnapshot), type);
+
+    // Cap the project-level stack to match the per-script history limit
+    // configured in Preferences. Otherwise long sessions grow the stack
+    // forever even though the user can only reach `StackLimit` per script.
+    const int32_t limit = FunscriptUndoSystem::StackLimit;
+    if (limit > 0 && (int32_t)UndoStack.size() > limit) {
+        UndoStack.erase(UndoStack.begin(), UndoStack.begin() + (UndoStack.size() - limit));
+    }
+
     if (clearRedo)
         ClearRedo();
 
@@ -137,6 +147,10 @@ bool UndoSystem::Undo() noexcept
     }
 
     RedoStack.emplace_back(std::move(context));
+    const int32_t limit = FunscriptUndoSystem::StackLimit;
+    if (limit > 0 && (int32_t)RedoStack.size() > limit) {
+        RedoStack.erase(RedoStack.begin(), RedoStack.begin() + (RedoStack.size() - limit));
+    }
     return undidSomething;
 }
 

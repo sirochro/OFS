@@ -24,8 +24,20 @@ public:
 
 	bool IsSelecting = false;
 	bool IsRectSelecting = false; // true = 2D rectangle, false = time-band (legacy)
+	bool IsToggleSelecting = false; // true = Shift+drag XOR with current selection
 	bool PositionsItemHovered = false;
 	int32_t IsMovingIdx = -1;
+
+	// Group drag: when the user grabs a point that is already in the
+	// active script's selection (or any point with no modifier), drag
+	// moves the whole selection by the cursor delta.
+	bool IsGroupMovingPotential = false; // press recorded, drag not yet confirmed
+	bool IsGroupMovingActive = false;    // drag exceeded threshold; applying delta each frame
+	int32_t GroupMovingScriptIdx = -1;
+	float groupAnchorAtS = 0.f;
+	int32_t groupAnchorPos = 0;
+	float groupLastAppliedTimeOffset = 0.f;
+	int32_t groupLastAppliedPosOffset = 0;
 private:
 	void mouseScroll(const OFS_SDL_Event* ev) noexcept;
 	void videoLoaded(const class VideoLoadedEvent* ev) noexcept;

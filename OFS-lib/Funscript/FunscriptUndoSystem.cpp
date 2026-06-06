@@ -1,5 +1,7 @@
 #include "FunscriptUndoSystem.h"
 
+int32_t FunscriptUndoSystem::StackLimit = 100;
+
 void FunscriptUndoSystem::ClearRedo() noexcept
 {
 	RedoStack.clear();
@@ -8,12 +10,23 @@ void FunscriptUndoSystem::ClearRedo() noexcept
 void FunscriptUndoSystem::SnapshotRedo(int32_t type) noexcept
 {
 	RedoStack.emplace_back(std::move(ScriptState(type, script->Data())));
+	// Cap the redo stack too, otherwise an aggressive undo run after many
+	// edits could leak memory the user can never reach again.
+	if (StackLimit > 0 && (int32_t)RedoStack.size() > StackLimit) {
+		RedoStack.erase(RedoStack.begin(), RedoStack.begin() + (RedoStack.size() - StackLimit));
+	}
 }
 
 void FunscriptUndoSystem::Snapshot(int32_t type, bool clearRedo) noexcept
 {
 	OFS_PROFILE(__FUNCTION__);
 	UndoStack.emplace_back(std::move(ScriptState(type, script->Data())));
+
+	// Enforce the user-configured history limit. Drop the oldest entries
+	// first so the most recent N states are always preserved.
+	if (StackLimit > 0 && (int32_t)UndoStack.size() > StackLimit) {
+		UndoStack.erase(UndoStack.begin(), UndoStack.begin() + (UndoStack.size() - StackLimit));
+	}
 
 	// redo gets cleared after every snapshot
 	if (clearRedo)

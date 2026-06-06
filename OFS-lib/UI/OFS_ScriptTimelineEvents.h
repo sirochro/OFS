@@ -77,3 +77,14 @@ class FunscriptShouldSelectRectEvent : public OFS_Event<FunscriptShouldSelectRec
     FunscriptShouldSelectRectEvent(float startTime, float endTime, int32_t minPos, int32_t maxPos, bool clear, std::weak_ptr<Funscript> script) noexcept
         : startTime(startTime), endTime(endTime), minPos(minPos), maxPos(maxPos), clearSelection(clear), script(script) {}
 };
+
+class FunscriptSelectionShouldMoveEvent : public OFS_Event<FunscriptSelectionShouldMoveEvent>
+{
+    public:
+    float deltaTime;   // seconds, incremental from last frame
+    int32_t deltaPos;  // 0-100 units, incremental from last frame
+    bool started;      // true on the first frame of the drag (take undo snapshot)
+    std::weak_ptr<Funscript> script;
+    FunscriptSelectionShouldMoveEvent(float dt, int32_t dp, bool s, std::weak_ptr<Funscript> sc) noexcept
+        : deltaTime(dt), deltaPos(dp), started(s), script(sc) {}
+};
